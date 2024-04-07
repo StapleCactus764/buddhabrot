@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html>
+<!--
+Started: 4/2/2024, 10:52AM
+Working prototype: 4/3/2024, 10:54PM
+
+ - Try to sum frames for continue button
+ - Make the information always visible on the left and 
+   the window resize on the right
+ - 
+
+
+
+
+
+ -->
+<head>
+    <title>Buddhabrot</title>
+    <style>
+        * {
+            margin: 0;
+            /* overflow: hidden; */
+        }
+
+        canvas {
+            position: absolute;
+            /* right: 0px; */
+            background-color: black;
+            transform: rotate(90deg);
+        }
+
+        #buttons-and-stats {
+            position: absolute;
+            width: 400px;
+
+            margin: 8px;
+
+            font-family: monospace;
+            font-size: 14px;
+        }
+        #buttons-and-stats * {
+            position: relative;
+        }
+        #download {
+            margin-bottom: 4px;
+        }
+        #buttons-and-stats *:not(button) {
+            margin-left: 2px
+        }
+        #use-pause {
+            top: 2px;
+        }
+        #pause-info {
+            width: 390px;
+
+            text-align: justify;
+        }
+
+        li {
+            left: -20px;
+            margin-bottom: 10px;
+            /* text-align: justify; */
+            /* padding-left: -20px; */
+        }
+    </style>
+</head>
+
+<body>
+    <div id='buttons-and-stats'>
+        <button id='download' onclick='downloadSave();'>Download Save File</button>
+        <button id='upload' onclick='input.click();'>Upload Save File</button>
+        <button id='combine' onclick='combine();'>Combine</button>
+        <div id='stats'>
+            Status: <span id='status'>idle</span><br>
+            Iterations: <span id='iterations'></span><br>
+            Size: <span id='size'></span><br>
+            Points: <span id='num-points'></span><br>
+            Frame: <span id='frame'>0</span><br>
+            Last MSPF: <span id='mspf'>null</span><br>
+            Average MSPF: <span id='av'>null</span><br>
+            <br>
+        </div>
+        
+        <label for='use-pause' style='margin-right: -5px;'>Automatically pause?</label>
+        <input id='use-pause' type='checkbox' checked>
+        <br><br>
+        <p id='pause-info'>
+            Once every 30 minutes, the program will automatically pause
+            for 5 minutes to prevent overheating. This is completely unneeded for most devices,
+            but it may be useful for some weaker ones.
+        </p>
+        <br>
+        <br>
+        <h3>Instructions</h3>
+        <div id='instructions'>
+            <ul>
+                <li>
+                    Click on the black rectangle to begin rendering, click on it again to stop.
+                </li>
+                <li>
+                    You can download a save file with the designated button (please send this to me
+                    if you're finished!). If progress is lost and you have a save file, you can
+                    restore progress by uploading the save file.
+                </li>
+                <li>
+                    Please only send me the most recent save file, since it would mess with the
+                    final result to have multiple save files from the same rendering.
+                </li>
+                <li>
+                    The combine button is mostly just a utility for me. It combines multiple save
+                    files into one. Probably don't mess with it, since I can't guarentee that it
+                    won't break everything, haha
+                </li>
+            </ul>
+            
+
+        </div>
+    </div>
+
+    <script src='https://cdn.jsdelivr.net/gh/staplecactus764/webgl-compute-shader@v1.0.5/main.js'></script>
+    
+    <script id='points-vs' type='glsl'>
+attribute float id;
+
+uniform sampler2D zArr;
+uniform vec2 zArrDim;
+
+uniform sampler2D bArr;
+uniform vec2 bArrDim;
+
+uniform vec2 screenSize;
+uniform float scale;
+uniform vec2 offset; // Order normal
+
+varying float bounded;
+
+vec2 idToTex(float id) {
+    return (vec2(mod(id, zArrDim.x), floor(id / zArrDim.x)) + 0.5) / zArrDim;
+}
+
+void main() {
+    vec2 texPos = idToTex(id);
+
+    vec2 pos = texture2D(zArr, texPos).xy * scale - offset + screenSize / 2.0; // * vec2(screenSize.y / screenSize.x, 1)
+    vec2 totalPos = (floor(pos * 2.0)) / screenSize;
+    vec2 screenPos = totalPos - 1.0;
+
+    bounded = texture2D(bArr, texPos).x;
+    
+    gl_PointSize = 1.0;
+    gl_Position = vec4(screenPos, 0, 1);
+}
+    </script>
+    <script id='points-fs' type='glsl'>
+precision highp float;
+
+uniform sampler2D result;
+uniform vec2 resultDim;
+
+varying float bounded;
+
+void main() {
+    float val = texture2D(result, gl_FragCoord.xy / resultDim).x;
+    
+    gl_FragColor = vec4(val + bounded, 0, 0, 1);
+}
+    </script>
+
+    <script id='clear' type='glsl'>
+precision highp float;
+
+void main() {
+    gl_FragColor = vec4(0, 0, 0, 0);
+}
+
+    </script>
+
+    <script id='copy' type='glsl'>
+precision highp float;
+
+uniform sampler2D result;
+uniform vec2 resultDim;
+
+void main() {
+    gl_FragColor = texture2D(result, gl_FragCoord.xy / resultDim);
+}
+    </script>
+
+
+    <script id='step' type='glsl'>
+precision highp float;
+
+uniform sampler2D zArr;
+uniform vec2 zArrDim;
+uniform sampler2D cArr;
+uniform vec2 cArrDim;
+
+vec2 csquare(vec2 a) {
+    return vec2(a.x * a.x - a.y * a.y, 2.0 * a.x * a.y);
+}
+float dsq(vec2 a) {
+    return a.x * a.x + a.y * a.y;
+}
+
+void main() {
+    vec4 z = texture2D(zArr, gl_FragCoord.xy / zArrDim);
+    vec4 c = texture2D(cArr, gl_FragCoord.xy / cArrDim);
+
+    vec2 p1 = csquare(z.xy) + c.xy,
+        p2 = csquare(z.zw) + c.zw;
+    if (dsq(p1) >= 100.0) p1 = vec2(100, 100);
+    if (dsq(p2) >= 100.0) p2 = vec2(100, 100);
+
+    gl_FragColor = vec4(p1, p2);
+}
+    </script>
+
+    <!-- Checks which points are still bounded -->
+    <script id='check' type='glsl'>
+precision highp float;
+
+uniform sampler2D zArr;
+uniform vec2 zArrDim;
+
+float dsq(vec2 a) {
+    return a.x * a.x + a.y * a.y;
+} 
+
+void main() {
+    vec4 z = texture2D(zArr, gl_FragCoord.xy / zArrDim);
+
+
+    vec2 half1 = vec2(0, 0),
+        half2 = vec2(0, 0);
+    //if (z.x == 100.0 && z.y == 100.0)
+    //    half1 = vec2(1, 1);
+    //if (z.z == 100.0 && z.w == 100.0)
+    //    half2 = vec2(1, 1);
+
+    if (dsq(z.xy) >= 4.0) half1 = vec2(1, 1);
+    if (dsq(z.zw) >= 4.0) half2 = vec2(1, 1);
+
+    gl_FragColor = vec4(half1, half2);
+}
+    </script>
+
+    <script id='display' type='glsl'>
+precision highp float;
+
+uniform sampler2D result;
+uniform vec2 resultDim;
+
+uniform float max;
+
+void main() {
+    gl_FragColor = vec4(texture2D(result, gl_FragCoord.xy / resultDim).xxx / max, 1);
+}
+    </script>
+    
+
+    <script>
+
+let wakeLock;
+const getWakeLock = async () => {
+    try {
+        wakeLock = await navigator.wakeLock.request('screen');
+    } catch (e) {
+        console.log(e);
+    }
+};
+getWakeLock();
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) getWakeLock();
+});
+
+const cgl = {canvas: document.createElement('canvas')};
+cgl.context = cgl.canvas.getContext('webgl', {
+    powerPreference: 'high-performance',
+    antialias: false,
+});
+glCanvas = cgl.canvas,
+gl = cgl.context;
+ComputeShader.useContext(cgl);
+
+document.body.append(glCanvas);
+
+const formatter = new Intl.NumberFormat('en-US');
+
+let iter = 1_000_000;
+
+let width = 5 * 200, // 5 * 400
+    height = 4 * 200; // 4 * 400
+let pw = 300,
+    ph = 300;
+let scale,
+    offsetx,
+    offsety;
+
+
+const hash = location.hash,
+    hideResults = hash.includes('h');
+if (hash.includes('='))
+    iter = hash.slice(hash.indexOf('=') + 1);
+
+const setAll = () => {
+    scale = Math.min(width, height) / 400 * 110;
+    offsetx = 0;
+    offsety = Math.max(width, height) / 500 * -60;
+
+    glCanvas.width = width;
+    glCanvas.height = height;
+
+    let sWidth = Math.min(window.innerWidth - 410, window.innerHeight * height / width);
+    glCanvas.style.right = -(sWidth * width / height - sWidth) / 2 + 'px';//-((sWidth * height / width) / 2 | 0) + 'px';
+    glCanvas.style.top = (sWidth * width / height - sWidth) / 2 + 'px';//Math.min(window.innerHeight - sWidth) / 2 + 'px';
+    glCanvas.style.height = sWidth + 'px';
+    glCanvas.style.aspectRatio = width / height;
+
+    // glCanvas.style.top = (Math.max(width - height, 0) / 2 | 0) + 'px';
+
+    // document.getElementById('buttons-and-stats').style.top = width + 2 + 'px';
+    document.getElementById('size').textContent = height + 'x' + width;
+    document.getElementById('num-points').textContent = formatter.format(pw * ph);
+};
+setAll();
+window.onresize = setAll
+
+
+const zArr = new Float32Array(pw * ph * 4),
+    zTestArr = new Float32Array(pw * ph * 4),
+    cArr = new Float32Array(pw * ph * 4); // Bounded
+
+const z = new ComputeShaderInput('zArr', zArr, pw, ph),
+    c = new ComputeShaderInput('cArr', cArr, pw, ph),
+    b = new ComputeShaderInput('bArr', new Float32Array(pw * ph * 4), pw, ph)
+    r = new ComputeShaderInput('result', new Float32Array(width * height * 4), width, height),
+    tr = new ComputeShaderInput('result', new Float32Array(width * height * 4), width, height),
+    maxu = new ComputeShaderUniform('max', '1f', 0);
+
+const genRandom = () => {
+    for (let y = 0; y < ph; y ++) {
+        for (let x = 0; x < pw; x ++) {
+            const index = (y * pw + x) * 4;
+
+            // Order of offsets is swapped
+            cArr[index    ] = (Math.random() * width  - width  / 2 + offsety) / scale;// (x       - pw / 2 + offsety) / scale;
+            cArr[index + 1] = (Math.random() * height - height / 2 + offsetx) / scale;// (y       - ph / 2 + offsetx) / scale;
+            cArr[index + 2] = (Math.random() * width  - width  / 2 + offsety) / scale;// (x + 0.5 - pw / 2 + offsety) / scale;
+            cArr[index + 3] = (Math.random() * height - height / 2 + offsetx) / scale;// (y + 0.5 - ph / 2 + offsetx) / scale;
+        }
+    }
+
+    c.update(cArr);
+};
+
+const clearShader = new ComputeShader(document.getElementById('clear').textContent, pw, ph);
+const clear = shader => {
+    clearShader.use();
+    clearShader.run();
+    ComputeShader.swap(clearShader.output, shader);
+};
+
+const copyShader = new ComputeShader(document.getElementById('copy').textContent, width, height);
+copyShader.use();
+copyShader.addInput(r);
+copyShader.initializeInputs();
+
+const copy = shader => {
+    copyShader.use();
+    copyShader.initializeInputs();
+    copyShader.run();
+    ComputeShader.swap(copyShader.output, shader);
+};
+
+const stepShader = new ComputeShader(document.getElementById('step').textContent, pw, ph);
+stepShader.use();
+stepShader.addInput(z);
+stepShader.addInput(c);
+stepShader.initializeInputs();
+
+const checkShader = new ComputeShader(document.getElementById('check').textContent, pw, ph);
+checkShader.use();
+checkShader.addInput(z);
+checkShader.addInput(c);
+checkShader.initializeInputs();
+
+const displayShader = new ComputeShader(document.getElementById('display').textContent, width, height);
+displayShader.use(true);
+displayShader.addInput(r);
+displayShader.addUniform(maxu);
+displayShader.initializeInputs();
+displayShader.initializeUniforms();
+
+const step = () => {
+    stepShader.use();
+    stepShader.initializeInputs();
+    stepShader.run();
+    ComputeShader.swap(stepShader.output, z);
+};
+
+const check = () => {
+    checkShader.use();
+    checkShader.initializeInputs();
+    checkShader.run();
+    ComputeShader.swap(checkShader.output, b);
+};
+
+const pvs = ComputeShader.createShader(gl, gl.VERTEX_SHADER, document.getElementById('points-vs').textContent),
+    pfs = ComputeShader.createShader(gl, gl.FRAGMENT_SHADER, document.getElementById('points-fs').textContent);
+
+const idAttrib = 10;
+const pointsProgram = (() => {
+    const program = gl.createProgram();
+    gl.attachShader(program, pvs);
+    gl.attachShader(program, pfs);
+
+    gl.bindAttribLocation(program, idAttrib, 'id');
+
+    gl.linkProgram(program);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new ComputeShaderError('An error occured in a program: ' + gl.getProgramInfoLog(program));
+    }
+
+    return program;
+})();
+
+const zArrUniform = gl.getUniformLocation(pointsProgram, 'zArr'),
+    zArrDimUniform = gl.getUniformLocation(pointsProgram, 'zArrDim'),
+    screenSizeUniform = gl.getUniformLocation(pointsProgram, 'screenSize'),
+    scaleUniform = gl.getUniformLocation(pointsProgram, 'scale'),
+    offsetUniform = gl.getUniformLocation(pointsProgram, 'offset'),
+    resultUniform = gl.getUniformLocation(pointsProgram, 'result'),
+    resultDimUniform = gl.getUniformLocation(pointsProgram, 'resultDim'),
+    bArrUniform = gl.getUniformLocation(pointsProgram, 'bArr'),
+    bArrDimUniform = gl.getUniformLocation(pointsProgram, 'bArrDim');
+
+gl.useProgram(pointsProgram);
+
+const numPoints = pw * ph,
+    pointIds = new Float32Array(numPoints);
+for (let i = 0; i < numPoints; i ++) pointIds[i] = i;
+
+gl.enableVertexAttribArray(idAttrib);
+
+const idBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, idBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, pointIds, gl.STATIC_DRAW);
+
+gl.vertexAttribPointer(idAttrib, 1, gl.FLOAT, false, 0, 0);
+
+gl.uniform2fv(screenSizeUniform, [width, height]);
+gl.uniform1f(scaleUniform, scale);
+gl.uniform2fv(offsetUniform, [offsety, offsetx]); // Order reversed
+
+
+const update = () => {
+    // Use
+    gl.useProgram(pointsProgram);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, tr.frameBuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tr.texture, 0);
+
+    // Initialize inputs
+    gl.uniform1i(zArrUniform, 0);
+    gl.uniform2fv(zArrDimUniform, [pw, ph]);
+
+    gl.uniform1i(resultUniform, 1);
+    gl.uniform2fv(resultDimUniform, [width, height]);
+
+    gl.uniform1i(bArrUniform, 2);
+    gl.uniform2fv(bArrDimUniform, [pw, ph]);
+
+    // Run
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, z.texture);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, r.texture);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, b.texture);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, idBuffer);
+
+    gl.viewport(0, 0, width, height);
+
+    gl.drawArrays(gl.POINTS, 0, numPoints);
+
+    ComputeShader.swap(tr, r);
+
+    copy(tr);
+};
+const display = () => {
+    const hits = r.read();
+    let max = 0;
+    for (let i = 0; i < hits.length; i += 4) {
+        if (hits[i] > max) max = hits[i];
+    }
+
+    maxu.update(max);
+
+    displayShader.use(true);
+    displayShader.initializeInputs();
+    displayShader.initializeUniforms();
+    displayShader.run();
+
+};
+
+
+const status = document.getElementById('status'),
+    mspf = document.getElementById('mspf'),
+    av = document.getElementById('av')
+    iterations = document.getElementById('iterations'),
+    frame = document.getElementById('frame'),
+    download = document.getElementById('download'),
+    usePause = document.getElementById('use-pause'),
+    pauseInfo = document.getElementById('pause-info');
+
+iterations.textContent = formatter.format(iter);
+
+const unpack = arr => {
+    const result = new Float32Array(arr.length * 4);
+    for (let i = 0; i < arr.length; i ++) {
+        result[i * 4    ] = arr[i];
+        result[i * 4 + 3] = 1;
+    }
+
+    return result;
+};
+
+const reader = new FileReader();
+reader.onload = e => {
+    const data = JSON.parse(e.target.result);
+    width = data.width;
+    height = data.height;
+    iter = data.iter;
+    pw = data.pw;
+    ph = data.ph;
+    frame.textContent = data.frames;
+
+    setAll();
+
+    const unpacked = unpack(data.hits);
+    r.update(unpacked);
+    tr.update(unpacked);
+    display();
+};
+
+const allOutputs = [];
+const combine = () => {
+    allOutputs.length = 0;
+
+    const ni = document.createElement('input');
+    ni.style.display = 'none';
+    ni.type = 'file';
+    ni.accept = '.json';
+    ni.multiple = 'multiple;'
+    document.body.appendChild(ni);
+
+    let readFiles = 0,
+        totalFiles;
+
+    const nr = new FileReader();
+    nr.onload = e => {
+        const data = JSON.parse(e.target.result);
+        allOutputs.push(data.hits);
+
+        readFiles ++;
+        if (readFiles === totalFiles) parseCombined();
+        else nr.readAsText(ni.files[readFiles]);
+    };
+
+    ni.addEventListener('input', () => {
+        totalFiles = ni.files.length;
+        nr.readAsText(ni.files[0]);
+    })
+
+    ni.click();
+};
+const parseCombined = () => {
+    const data = Array(allOutputs[0].length).fill(0);
+    for (const output of allOutputs) {
+        for (let i = 0; i < output.length; i ++) {
+            data[i] += output[i];
+        }
+    }
+
+    const unpacked = unpack(data);
+    r.update(unpacked);
+    tr.update(unpacked);
+    display();
+};
+
+
+const input = document.createElement('input');
+    input.style.display = 'none';
+    input.type = 'file';
+    input.accept = '.json';
+    document.body.appendChild(input);
+input.addEventListener('input', () => reader.readAsText(input.files[0]));
+
+const downloadSave = () => {
+    const hits = r.read(),
+        dataArr = [];
+    for (let i = 0; i < hits.length; i += 4) dataArr.push(hits[i]);
+
+    const data = JSON.stringify({
+            iter: iter,
+            width: width,
+            height: height,
+            pw: pw,
+            ph: ph,
+            frames: frames,
+            hits: dataArr,
+        }),
+        blob = new Blob([data]),
+        url = window.URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.download = 'save.json';
+    document.body.appendChild(a);
+    a.click();
+
+    window.URL.revokeObjectURL(url);
+};
+
+
+let lastDisplay = performance.now(),
+    frames = 0,
+    stage = 0,
+    curChunk = 0,
+    chunkSize = 100,
+    chunkNum = Math.ceil(iter / chunkSize),
+    start,
+    paused = false,
+    temp = 0,
+    total = 0,
+    samples = 0;
+const setFrame = secondHalf => frame.textContent = (frames + (secondHalf ? 0.5 : 0) + 0.5 * curChunk / chunkNum).toFixed(1);
+
+const loop = () => {
+    if (paused) return;
+
+    switch(stage) {
+        case 0:
+            start = performance.now();
+            genRandom();
+            clear(z);
+
+            stage ++;
+        case 1:
+            if (curChunk === chunkNum - 1) {
+                const size = iter % chunkSize;
+                for (let i = 0; i < (size === 0 ? chunkSize : size); i ++) (step(), temp ++);
+                
+                setFrame(false);
+                curChunk = 0;
+                stage ++;
+            } else {
+                for (let i = 0; i < chunkSize; i ++) (step(), temp ++);
+                
+                setFrame(false);
+                curChunk ++;
+
+                break;
+            }
+        case 2:
+            check();
+            clear(z);
+            
+            stage ++;
+        case 3:
+            if (curChunk === chunkNum - 1) {
+                const size = iter % chunkSize;
+                for (let i = 0; i < (size === 0 ? chunkSize : size); i ++) {
+                    step();
+                    update();
+                }
+                
+                setFrame(true);
+                curChunk = 0;
+                stage ++;
+            } else {
+                for (let i = 0; i < chunkSize; i ++) {
+                    step();
+                    update();
+                }
+                
+                setFrame(true);
+                curChunk ++;
+                break;
+            }
+        case 4:
+            const end = performance.now();
+            if (end - lastDisplay > 5000 && !hideResults) {
+                display();
+                lastDisplay = performance.now();
+            }
+            
+            const frameTime = end - start | 0;
+            mspf.textContent = frameTime + 'ms';
+            
+            total += frameTime;
+            samples ++;
+            av.textContent = (total / samples | 0) + 'ms';
+
+            start = performance.now();
+            frames ++;
+
+            stage = 0;
+        break;
+    }
+};
+
+let pauseInterval = 0;
+const startPause = () => {
+    paused = true;
+    status.textContent = 'paused';
+
+    window.clearInterval(pauseInterval);
+    pauseInterval = window.setInterval(endPause, 1000 * 60 * 5); // 5 minutes
+};
+const endPause = () => {
+    paused = false;
+    status.textContent = 'running';
+
+    window.clearInterval(pauseInterval);
+    pauseInterval = window.setInterval(startPause, 1000 * 60 * 30); // 30 minutes
+};
+
+usePause.addEventListener('change', () => {
+    if (usePause.checked) {
+        pauseInfo.style.display = 'inline-block';
+    } else {
+        window.clearInterval(pauseInterval);
+        pauseInfo.style.display = 'none';
+    }
+});
+
+let toggle = false;
+let interval = 0;
+glCanvas.addEventListener('mousedown', e => {
+    if (e.button === 2) return;
+
+    status.textContent = toggle ? 'idle' : 'running';
+
+    if (toggle) {
+        window.clearInterval(interval);
+        window.clearInterval(pauseInterval);
+    }
+    else {
+        interval = window.setInterval(loop, 1);
+        if (usePause.checked) endPause();
+    }
+    toggle = !toggle;
+});
+
+    </script>
+</body>
+
+</html>
