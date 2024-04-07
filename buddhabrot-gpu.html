@@ -3,16 +3,7 @@
 <!--
 Started: 4/2/2024, 10:52AM
 Working prototype: 4/3/2024, 10:54PM
-
- - Try to sum frames for continue button
- - Make the information always visible on the left and 
-   the window resize on the right
- - 
-
-
-
-
-
+Finished: 4/7/2024, 3:30PM
  -->
 <head>
     <title>Buddhabrot</title>
@@ -232,11 +223,7 @@ void main() {
 
     vec2 half1 = vec2(0, 0),
         half2 = vec2(0, 0);
-    //if (z.x == 100.0 && z.y == 100.0)
-    //    half1 = vec2(1, 1);
-    //if (z.z == 100.0 && z.w == 100.0)
-    //    half2 = vec2(1, 1);
-
+    
     if (dsq(z.xy) >= 4.0) half1 = vec2(1, 1);
     if (dsq(z.zw) >= 4.0) half2 = vec2(1, 1);
 
@@ -257,9 +244,7 @@ void main() {
 }
     </script>
     
-
     <script>
-
 let wakeLock;
 const getWakeLock = async () => {
     try {
@@ -296,7 +281,6 @@ let pw = 300,
 let scale,
     offsetx,
     offsety;
-
 
 const hash = location.hash,
     hideResults = hash.includes('h');
@@ -492,7 +476,9 @@ const update = () => {
 
     copy(tr);
 };
-const display = () => {
+const display = override => {
+    if (!override && hideResults) return;
+
     const hits = r.read();
     let max = 0;
     for (let i = 0; i < hits.length; i += 4) {
@@ -761,5 +747,4 @@ glCanvas.addEventListener('mousedown', e => {
 
     </script>
 </body>
-
 </html>
