@@ -223,7 +223,11 @@ void main() {
 
     vec2 half1 = vec2(0, 0),
         half2 = vec2(0, 0);
-    
+    //if (z.x == 100.0 && z.y == 100.0)
+    //    half1 = vec2(1, 1);
+    //if (z.z == 100.0 && z.w == 100.0)
+    //    half2 = vec2(1, 1);
+
     if (dsq(z.xy) >= 4.0) half1 = vec2(1, 1);
     if (dsq(z.zw) >= 4.0) half2 = vec2(1, 1);
 
@@ -244,7 +248,9 @@ void main() {
 }
     </script>
     
+
     <script>
+
 let wakeLock;
 const getWakeLock = async () => {
     try {
@@ -284,8 +290,10 @@ let scale,
 
 const hash = location.hash,
     hideResults = hash.includes('h');
-if (hash.includes('='))
-    iter = hash.slice(hash.indexOf('=') + 1);
+if (hash.includes('iter=')) 
+    iter = +hash.slice(hash.indexOf('iter=') + 5);
+if (hash.includes('p=')) 
+    pw = ph = +hash.slice(hash.indexOf('p=') + 2, hash.indexOf('&iter'));
 
 const setAll = () => {
     scale = Math.min(width, height) / 400 * 110;
@@ -619,7 +627,7 @@ let lastDisplay = performance.now(),
     frames = 0,
     stage = 0,
     curChunk = 0,
-    chunkSize = 20,
+    chunkSize = 100,
     chunkNum = Math.ceil(iter / chunkSize),
     start,
     paused = false,
@@ -747,4 +755,5 @@ glCanvas.addEventListener('mousedown', e => {
 
     </script>
 </body>
+
 </html>
